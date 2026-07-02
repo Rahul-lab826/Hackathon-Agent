@@ -1,0 +1,107 @@
+name: HackLaunch CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main", "release/*" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.10"
+
+    - name: Install dependencies
+      run: |
+        cd backend
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest flake8
+
+    - name: Lint with flake8
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 backend --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings
+        flake8 backend --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Run Pytest suite
+      run: |
+        cd backend
+        # Run pytest if test files exist, ignore exit code 5 (no tests found) to pass build
+        pytest || [ $? -eq 5 ]
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        cd frontend
+        npm ci
+
+    - name: Run Next.js Production Build
+      run: |
+        cd frontend
+        npm run build
+
+  deploy-to-gcp:
+    needs: [test-backend, test-frontend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+
+    - name: Configure Docker client
+      run: |
+        gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+    - name: Build & Push Backend Container
+      run: |
+        docker build -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/hacklaunch/backend:latest ./backend
+        docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/hacklaunch/backend:latest
+
+    - name: Build & Push Frontend Container
+      run: |
+        docker build -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/hacklaunch/frontend:latest ./frontend
+        docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/hacklaunch/frontend:latest
+
+    - name: Deploy Backend to Google Cloud Run
+      run: |
+        gcloud run deploy hacklaunch-backend \
+          --image us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/hacklaunch/backend:latest \
+          --region us-central1-1 \
+          --platform managed \
+          --allow-unauthenticated \
+          --set-env-vars="DATABASE_URL=${{ secrets.PROD_DATABASE_URL }},REDIS_URL=${{ secrets.PROD_REDIS_URL }},QDRANT_URL=${{ secrets.PROD_QDRANT_URL }},GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},APP_SECRET_KEY=${{ secrets.APP_SECRET_KEY }},JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}"
+
+    - name: Deploy Frontend to Google Cloud Run
+      run: |
+        gcloud run deploy hacklaunch-frontend \
+          --image us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/hacklaunch/frontend:latest \
+          --region us-central1-1 \
+          --platform managed \
+          --allow-unauthenticated \
+          --set-env-vars="NEXT_PUBLIC_API_URL=https://hacklaunch-backend-uc.a.run.app/api/v1"
