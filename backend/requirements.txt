@@ -15,7 +15,7 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.2.0
 
 # OAuth
-httpx==0.28.0
+httpx==0.28.1
 authlib==1.3.2
 
 # Validation
@@ -30,7 +30,7 @@ orjson==3.10.12
 # Dev / Testing
 pytest==8.3.4
 pytest-asyncio==0.24.0
-httpx==0.28.0
+httpx==0.28.1
 
 # Qdrant & AI
 qdrant-client==1.12.1
