@@ -146,6 +146,33 @@ def create_app() -> FastAPI:
 
         return status_info
 
+    # ─── Static Files Mounting (Serving Frontend) ────────────────────────────
+    import os
+    from fastapi.staticfiles import StaticFiles
+    from starlette.exceptions import HTTPException
+    from starlette.responses import Response
+
+    class SPAStaticFiles(StaticFiles):
+        async def get_response(self, path: str, scope) -> Response:
+            # Clean path and check if a corresponding .html file exists
+            clean_path = path.split("?")[0]
+            full_path = os.path.join(self.directory, clean_path)
+            html_path = full_path.rstrip("/") + ".html"
+            if os.path.isfile(html_path):
+                return await super().get_response(clean_path.rstrip("/") + ".html", scope)
+
+            try:
+                response = await super().get_response(clean_path, scope)
+                if response.status_code == 404:
+                    return await super().get_response("index.html", scope)
+                return response
+            except Exception:
+                return await super().get_response("index.html", scope)
+
+    frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "out"))
+    if os.path.exists(frontend_path):
+        app.mount("/", SPAStaticFiles(directory=frontend_path, html=True), name="frontend")
+
     return app
 
 
